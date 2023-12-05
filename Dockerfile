@@ -10,7 +10,7 @@ WORKDIR /build
 
 RUN python3 -m venv /build/venv
 RUN . /build/venv/bin/activate && \
-    pip3 install --upgrade pip setuptools && \
+    pip3 install --upgrade pip setuptools wheel && \
     pip3 install torch torchvision torchaudio && \
     pip3 install -r requirements.txt
 
@@ -26,7 +26,7 @@ LABEL maintainer="Your Name <your.email@example.com>"
 LABEL description="Docker image for GPTQ-for-LLaMa and Text Generation WebUI"
 
 RUN apt-get update && \
-    apt-get install --no-install-recommends -y libportaudio2 libasound-dev git python3 python3-pip make g++ && \
+    apt-get install --no-install-recommends -y python3-dev libportaudio2 libasound-dev git python3 python3-pip make g++ && \
     rm -rf /var/lib/apt/lists/*
 
 RUN --mount=type=cache,target=/root/.cache/pip pip3 install virtualenv
@@ -39,7 +39,7 @@ RUN test -n "${WEBUI_VERSION}" && git reset --hard ${WEBUI_VERSION} || echo "Usi
 
 RUN virtualenv /app/venv
 RUN . /app/venv/bin/activate && \
-    pip3 install --upgrade pip setuptools && \
+    pip3 install --upgrade pip setuptools wheel && \
     pip3 install torch torchvision torchaudio
 
 COPY --from=builder /build /app/repositories/GPTQ-for-LLaMa
@@ -52,12 +52,14 @@ COPY extensions/google_translate/requirements.txt /app/extensions/google_transla
 COPY extensions/silero_tts/requirements.txt /app/extensions/silero_tts/requirements.txt
 COPY extensions/whisper_stt/requirements.txt /app/extensions/whisper_stt/requirements.txt
 COPY extensions/openai/requirements.txt /app/extensions/openai/requirements.txt
+COPY extensions/ngrok/requirements.txt /app/extensions/ngrok/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip . /app/venv/bin/activate && cd extensions/api && pip3 install -r requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip . /app/venv/bin/activate && cd extensions/elevenlabs_tts && pip3 install -r requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip . /app/venv/bin/activate && cd extensions/google_translate && pip3 install -r requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip . /app/venv/bin/activate && cd extensions/silero_tts && pip3 install -r requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip . /app/venv/bin/activate && cd extensions/whisper_stt && pip3 install -r requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip . /app/venv/bin/activate && cd extensions/openai && pip3 install -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip . /app/venv/bin/activate && cd extensions/ngrok && pip3 install -r requirements.txt
 
 COPY requirements.txt /app/requirements.txt
 RUN . /app/venv/bin/activate && \
