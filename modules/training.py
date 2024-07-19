@@ -192,11 +192,13 @@ def create_ui():
     # doesn't work with the .then() syntax, so I write them one
     # by one in this ugly but functional way.
     ev = start_evaluation.click(calculate_perplexity, [models, evaluate_text_file, stride_length, max_length], evaluation_log, show_progress=False)
-    start_evaluation.click(generate_markdown_table, None, evaluation_table, show_progress=False)
+    ev.then(generate_markdown_table, None, evaluation_table, show_progress=False)
 
-    start_current_evaluation.click(lambda: ['current model'], None, tmp)
-    ev_cur = start_current_evaluation.click(calculate_perplexity, [tmp, evaluate_text_file, stride_length, max_length], evaluation_log, show_progress=False)
-    start_current_evaluation.click(generate_markdown_table, None, evaluation_table, show_progress=False)
+    ev_cur = start_current_evaluation.click(
+        lambda: ['current model'], None, tmp).then(
+        calculate_perplexity, [tmp, evaluate_text_file, stride_length, max_length], evaluation_log, show_progress=False)
+
+    ev_cur.then(generate_markdown_table, None, evaluation_table, show_progress=False)
 
     stop_evaluation.click(None, None, None, cancels=[ev, ev_cur], queue=False)
     refresh_table.click(generate_markdown_table, None, evaluation_table, show_progress=True)
@@ -249,7 +251,7 @@ def backup_adapter(input_folder):
         adapter_file = Path(f"{input_folder}/adapter_model.bin")
         if adapter_file.is_file():
 
-            logger.info("Backing up existing LoRA adapter...")
+            logger.info("Backing up existing LoRA adapter")
             creation_date = datetime.fromtimestamp(adapter_file.stat().st_ctime)
             creation_date_str = creation_date.strftime("Backup-%Y-%m-%d")
 
@@ -290,12 +292,6 @@ def calc_trainable_parameters(model):
 
 def do_train(lora_name: str, always_override: bool, q_proj_en: bool, v_proj_en: bool, k_proj_en: bool, o_proj_en: bool, gate_proj_en: bool, down_proj_en: bool, up_proj_en: bool, save_steps: int, micro_batch_size: int, batch_size: int, epochs: int, learning_rate: str, lr_scheduler_type: str, lora_rank: int, lora_alpha: int, lora_dropout: float, cutoff_len: int, dataset: str, eval_dataset: str, format: str, eval_steps: int, raw_text_file: str, overlap_len: int, newline_favor_len: int, higher_rank_limit: bool, warmup_steps: int, optimizer: str, hard_cut_string: str, train_only_after: str, stop_at_loss: float, add_eos_token: bool, min_chars: int, report_to: str):
 
-    if shared.args.monkey_patch:
-        from alpaca_lora_4bit.monkeypatch.peft_tuners_lora_monkey_patch import (
-            replace_peft_model_with_int4_lora_model
-        )
-        replace_peft_model_with_int4_lora_model()
-
     global WANT_INTERRUPT
     WANT_INTERRUPT = False
 
@@ -327,10 +323,6 @@ def do_train(lora_name: str, always_override: bool, q_proj_en: bool, v_proj_en: 
 
         time.sleep(5)
 
-    if shared.args.loader == 'GPTQ-for-LLaMa' and not shared.args.monkey_patch:
-        yield "LoRA training with GPTQ-for-LLaMa requires loading with `--monkey-patch`"
-        return
-
     if cutoff_len <= 0 or micro_batch_size <= 0 or batch_size <= 0 or actual_lr <= 0 or lora_rank <= 0 or lora_alpha <= 0:
         yield "Cannot input zeroes."
         return
@@ -341,7 +333,7 @@ def do_train(lora_name: str, always_override: bool, q_proj_en: bool, v_proj_en: 
 
     # Populate target_modules list with chosen X_proj modules. Llama-based models only atm, non-llama will revert to default behavior.
     def list_target_modules(model_id):
-        if model_id != "llama":
+        if model_id != "llama" and model_id != "mistral":
             return model_to_lora_modules[model_id]
 
         available_modules = {
@@ -406,7 +398,7 @@ def do_train(lora_name: str, always_override: bool, q_proj_en: bool, v_proj_en: 
     # == Prep the dataset, format, etc ==
     if raw_text_file not in ['None', '']:
         train_template["template_type"] = "raw_text"
-        logger.info("Loading raw text file dataset...")
+        logger.info("Loading raw text file dataset")
         fullpath = clean_path('training/datasets', f'{raw_text_file}')
         fullpath = Path(fullpath)
         if fullpath.is_dir():
@@ -486,7 +478,7 @@ def do_train(lora_name: str, always_override: bool, q_proj_en: bool, v_proj_en: 
             prompt = generate_prompt(data_point)
             return tokenize(prompt, add_eos_token)
 
-        logger.info("Loading JSON datasets...")
+        logger.info("Loading JSON datasets")
         data = load_dataset("json", data_files=clean_path('training/datasets', f'{dataset}.json'))
         train_data = data['train'].map(generate_and_tokenize_prompt, new_fingerprint='%030x' % random.randrange(16**30))
 
@@ -516,13 +508,14 @@ def do_train(lora_name: str, always_override: bool, q_proj_en: bool, v_proj_en: 
 
     # == Start prepping the model itself ==
     if not hasattr(shared.model, 'lm_head') or hasattr(shared.model.lm_head, 'weight'):
-        logger.info("Getting model ready...")
-        prepare_model_for_kbit_training(shared.model)
+        logger.info("Getting model ready")
+        if 'quantization_config' in shared.model.config.to_dict():
+            prepare_model_for_kbit_training(shared.model)
 
     # base model is now frozen and should not be reused for any other LoRA training than this one
     shared.model_dirty_from_training = True
 
-    logger.info("Preparing for training...")
+    logger.info("Preparing for training")
     config = LoraConfig(
         r=lora_rank,
         lora_alpha=lora_alpha,
@@ -540,24 +533,15 @@ def do_train(lora_name: str, always_override: bool, q_proj_en: bool, v_proj_en: 
     model_trainable_params, model_all_params = calc_trainable_parameters(shared.model)
 
     try:
-        logger.info("Creating LoRA model...")
+        logger.info("Creating LoRA model")
         lora_model = get_peft_model(shared.model, config)
         if not always_override and Path(f"{lora_file_path}/adapter_model.bin").is_file():
-            logger.info("Loading existing LoRA data...")
+            logger.info("Loading existing LoRA data")
             state_dict_peft = torch.load(f"{lora_file_path}/adapter_model.bin", weights_only=True)
             set_peft_model_state_dict(lora_model, state_dict_peft)
     except:
         yield traceback.format_exc().replace('\n', '\n\n')
         return
-
-    if shared.args.monkey_patch:
-        from alpaca_lora_4bit.autograd_4bit import Autograd4bitQuantLinear
-        from alpaca_lora_4bit.models import Linear4bitLt
-        for _, m in lora_model.named_modules():
-            if isinstance(m, Autograd4bitQuantLinear) or isinstance(m, Linear4bitLt):
-                if m.is_v1_model:
-                    m.zeros = m.zeros.half()
-                m.scales = m.scales.half()
 
     class Tracked():
         def __init__(self):
@@ -604,6 +588,11 @@ def do_train(lora_name: str, always_override: bool, q_proj_en: bool, v_proj_en: 
                     control.should_training_stop = True
                     print(f"\033[1;31;1mStop Loss {stop_at_loss} reached.\033[0;37;0m")
 
+    # Fix training for mixed precision models
+    for param in shared.model.parameters():
+        if param.requires_grad:
+            param.data = param.data.float()
+
     trainer = transformers.Trainer(
         model=lora_model,
         train_dataset=train_data,
@@ -615,7 +604,8 @@ def do_train(lora_name: str, always_override: bool, q_proj_en: bool, v_proj_en: 
             warmup_steps=math.ceil(warmup_steps / gradient_accumulation_steps),
             num_train_epochs=epochs,
             learning_rate=actual_lr,
-            fp16=False if shared.args.cpu else True,
+            fp16=False if shared.args.cpu or shared.args.bf16 else True,
+            bf16=shared.args.bf16,
             optim=optimizer,
             logging_steps=2 if stop_at_loss > 0 else 5,
             evaluation_strategy="steps" if eval_data is not None else "no",
@@ -627,7 +617,7 @@ def do_train(lora_name: str, always_override: bool, q_proj_en: bool, v_proj_en: 
             # TODO: Enable multi-device support
             ddp_find_unused_parameters=None,
             no_cuda=shared.args.cpu,
-            use_ipex=True if is_torch_xpu_available and not shared.args.cpu else False
+            use_ipex=True if is_torch_xpu_available() and not shared.args.cpu else False
         ),
         data_collator=transformers.DataCollatorForLanguageModeling(shared.tokenizer, mlm=False),
         callbacks=list([Callbacks()])
@@ -648,7 +638,7 @@ def do_train(lora_name: str, always_override: bool, q_proj_en: bool, v_proj_en: 
         json.dump(train_template, file, indent=2)
 
     # == Main run and monitor loop ==
-    logger.info("Starting training...")
+    logger.info("Starting training")
     yield "Starting..."
 
     lora_trainable_param, lora_all_param = calc_trainable_parameters(lora_model)
@@ -730,7 +720,7 @@ def do_train(lora_name: str, always_override: bool, q_proj_en: bool, v_proj_en: 
 
     # Saving in the train thread might fail if an error occurs, so save here if so.
     if not tracked.did_save:
-        logger.info("Training complete, saving...")
+        logger.info("Training complete, saving")
         lora_model.save_pretrained(lora_file_path)
 
     if WANT_INTERRUPT:

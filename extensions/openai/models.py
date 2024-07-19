@@ -9,7 +9,8 @@ from modules.utils import get_available_loras, get_available_models
 def get_current_model_info():
     return {
         'model_name': shared.model_name,
-        'lora_names': shared.lora_names
+        'lora_names': shared.lora_names,
+        'loader': shared.args.loader
     }
 
 
@@ -55,7 +56,6 @@ def _load_model(data):
                 setattr(shared.args, k, args[k])
 
     shared.model, shared.tokenizer = load_model(model_name)
-    shared.model_name = model_name
 
     # Update shared.settings with custom generation defaults
     if settings:

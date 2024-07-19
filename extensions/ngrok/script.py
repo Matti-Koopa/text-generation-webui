@@ -8,7 +8,6 @@
 # See this example for full list of options: https://github.com/ngrok/ngrok-py/blob/main/examples/ngrok-connect-full.py
 # or the README.md in this directory.
 
-import logging
 from modules import shared
 
 # Pick up host/port command line arguments
@@ -22,10 +21,8 @@ options = {
     'session_metadata': 'text-generation-webui',
 }
 
-print("A")
 
-def setup():
-    print("B")
+def ui():
     settings = shared.settings.get("ngrok")
     if settings:
         options.update(settings)
@@ -33,8 +30,6 @@ def setup():
     try:
         import ngrok
         tunnel = ngrok.connect(**options)
-        print(f"Ingress established at: {tunnel.url()}")
+        shared.logger.info(f"Ingress established at: {tunnel.url()}")
     except ModuleNotFoundError:
-        logging.error("===> ngrok library not found, please run `pip install -r extensions/ngrok/requirements.txt`")
-    except Exception as err:
-        print(f"Unexpected {err=}")
+        shared.logger.error("===> ngrok library not found, please run `pip install -r extensions/ngrok/requirements.txt`")

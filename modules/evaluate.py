@@ -7,6 +7,7 @@ from datasets import load_dataset
 from tqdm import tqdm
 
 from modules import shared
+from modules.logging_colors import logger
 from modules.models import clear_torch_cache, load_model, unload_model
 from modules.models_settings import get_model_metadata, update_model_parameters
 from modules.text_generation import encode
@@ -37,6 +38,21 @@ def calculate_perplexity(models, input_dataset, stride, _max_length):
     Based on:
     https://huggingface.co/docs/transformers/perplexity#calculating-ppl-with-fixedlength-models
     '''
+
+    if shared.args.loader == "llama.cpp":
+        logger.error("llamacpp_HF is required for perplexity evaluation with GGUF models. Please reload the model with llamacpp_HF instead of llama.cpp.")
+        raise ValueError
+
+    if shared.args.loader == "ExLlamav2":
+        logger.error("ExLlamav2_HF is required for perplexity evaluation with EXL2 models. Please reload the model with ExLlamav2_HF instead of ExLlamav2.")
+        raise ValueError
+
+    if shared.args.loader == "llamacpp_HF" and not shared.args.logits_all:
+        logger.error("--logits_all is required for perplexity evaluation with GGUF models. Please reload the model with that option set/checked.")
+        raise ValueError
+
+    if not shared.args.no_use_fast:
+        logger.warning("--no_use_fast is not set. If tokenizing the input dataset takes a long time, try reloading the model with that option set/checked.")
 
     global past_evaluations
     cumulative_log = ''
@@ -69,9 +85,8 @@ def calculate_perplexity(models, input_dataset, stride, _max_length):
                 model_settings = get_model_metadata(model)
                 shared.settings.update({k: v for k, v in model_settings.items() if k in shared.settings})  # hijacking the interface defaults
                 update_model_parameters(model_settings)  # hijacking the command-line arguments
-                shared.model_name = model
                 unload_model()
-                shared.model, shared.tokenizer = load_model(shared.model_name)
+                shared.model, shared.tokenizer = load_model(model)
             except:
                 cumulative_log += f"Failed to load `{model}`. Moving on.\n\n"
                 yield cumulative_log
@@ -112,9 +127,14 @@ def calculate_perplexity(models, input_dataset, stride, _max_length):
                 break
 
         ppl = torch.exp(torch.stack(nlls).mean())
+
         add_entry_to_past_evaluations(float(ppl), shared.model_name, input_dataset, stride, _max_length)
         save_past_evaluations(past_evaluations)
-        cumulative_log += f"The perplexity for `{shared.model_name}` is: {float(ppl)}\n\n"
+
+        message = f"The perplexity for `{shared.model_name}` is: {float(ppl)}"
+        logger.info(message)
+
+        cumulative_log += f"{message}\n\n"
         yield cumulative_log
 
 
